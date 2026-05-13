@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LifeApp 🌙</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Mono:wght@400;500;700&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:#020617;min-height:100vh;display:flex;align-items:flex-start;justify-content:center;font-family:'DM Mono',monospace;}
+  ::-webkit-scrollbar{width:4px;} ::-webkit-scrollbar-thumb{background:#334155;border-radius:4px;}
+  input::placeholder{color:#475569;}
+  select option { background: #1e293b; color: #f1f5f9; }
+  @keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(-10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+  @keyframes streakFire{0%,100%{transform:scale(1) rotate(-3deg)}50%{transform:scale(1.15) rotate(3deg)}}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes levelUp{0%{transform:scale(0.7);opacity:0}60%{transform:scale(1.1)}100%{transform:scale(1);opacity:1}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script>
+const { useState, useEffect, useRef, useCallback } = React;
+
+const XP_TABLE = { todo_done:20, workout_done:35, wasser_ziel:50, schlaf_ziel:40, schritte_ziel:60, kalorien_ok:30 };
+const xpForLevel = (lvl) => lvl * 150;
+const TITLES = ["Anfänger 🌱","Entschlossen 🔥","Kämpfer ⚡","Champion 💪","Legende 🏆","Unsterblich 👑"];
+const TABS = ["Aufgaben","Fitness","Gesundheit","Streak","Bildschirm","Profil"];
+const TAB_ICONS = ["✓","⚡","♥","🔥","📱","★"];
+const TAB_COLORS = ["#818cf8","#22d3ee","#f43f5e","#f97316","#a78bfa","#f59e0b"];
+const priorityXP = { hoch:30, mittel:20, niedrig:10 };
+const priorityColor = { hoch:"#f43f5e", mittel:"#f59e0b", niedrig:"#22d3ee" };
+
+const REMINDER_PRESETS = [
+  { label:"💧 Wasser trinken", note:"Zeit für ein Glas Wasser! +10 XP in LifeApp" },
+  { label:"🏃 Sport Zeit", note:"Dein Training wartet! Erledige es für +35 XP" },
+  { label:"🌙 Schlaf-Erinnerung", note:"Bald schlafen gehen für dein Schlaf-Ziel!" },
+  { label:"✅ Aufgaben checken", note:"Schau deine To-Do Liste an und sammle XP!" },
+];
+
+const APPS = [
+  { id:"instagram", name:"Instagram", icon:"📸", color:"#e1306c", limit:30 },
+  { id:"tiktok", name:"TikTok", icon:"🎵", color:"#fe2c55", limit:30 },
+  { id:"youtube", name:"YouTube", icon:"▶️", color:"#ff0000", limit:60 },
+  { id:"twitter", name:"Twitter/X", icon:"✕", color:"#1d9bf0", limit:20 },
+  { id:"netflix", name:"Netflix", icon:"🎬", color:"#e50914", limit:90 },
+  { id:"games", name:"Games", icon:"🎮", color:"#a78bfa", limit:45 },
+];
+
+const WEEK_DAYS = ["Mo","Di","Mi","Do","Fr","Sa","So"];
+
+// ── HELPERS ──
+function ProgressRing({ value, max, color, size=80, label, unit }) {
+  const r = (size-12)/2, circ = 2*Math.PI*r, pct = Math.min(value/max,1), offset = circ*(1-pct);
+  return React.createElement('div', { style:{display:"flex",flexDirection:"column",alignItems:"center",gap:4} },
+    React.createElement('svg', { width:size, height:size },
+      React.createElement('circle', { cx:size/2,cy:size/2,r,fill:"none",stroke:"#1e293b",strokeWidth:10 }),
+      React.createElement('circle', { cx:size/2,cy:size/2,r,fill:"none",stroke:color,strokeWidth:10,
+        strokeDasharray:circ,strokeDashoffset:offset,strokeLinecap:"round",
+        transform:`rotate(-90 ${size/2} ${size/2})`,style:{transition:"stroke-dashoffset 0.5s ease"} }),
+      React.createElement('text', { x:size/2,y:size/2+5,textAnchor:"middle",fill:"white",fontSize:12,fontWeight:"700",fontFamily:"'DM Mono',monospace" }, value)
+    ),
+    React.createElement('span', { style:{fontSize:10,color:"#94a3b8",textAlign:"center",fontFamily:"'DM Mono',monospace"} },
+      label, React.createElement('br'), React.createElement('span', { style:{color} }, unit)
+    )
+  );
+}
+
+function XPToast({ msg, onDone }) {
+  useEffect(() => { const t = setTimeout(onDone,2200); return ()=>clearTimeout(t); }, []);
+  return React.createElement('div', { style:{
+    position:"fixed",top:24,left:"50%",transform:"translateX(-50%)",
+    background:"linear-gradient(135deg,#818cf8,#22d3ee)",color:"#fff",
+    padding:"10px 22px",borderRadius:50,fontWeight:700,fontSize:14,
+    fontFamily:"'DM Mono',monospace",zIndex:9999,boxShadow:"0 4px 24px #818cf844",
+    animation:"toastIn 0.3s ease", whiteSpace:"nowrap",
+  } }, msg);
+}
+
+function LevelUpBanner({ level, title, onDone }) {
+  useEffect(() => { const t = setTimeout(onDone,3000); return ()=>clearTimeout(t); }, []);
+  return React.createElement('div', { style:{position:"fixed",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#00000088",zIndex:9998} },
+    React.createElement('div', { style:{
+      background:"linear-gradient(135deg,#0f172a,#1e293b)",border:"2px solid #f59e0b",
+      borderRadius:24,padding:"32px 40px",textAlign:"center",fontFamily:"'Syne',sans-serif",
+      animation:"levelUp 0.4s ease",
+    } },
+      React.createElement('div', { style:{fontSize:48,marginBottom:8} }, "🎉"),
+      React.createElement('div', { style:{color:"#f59e0b",fontSize:22,fontWeight:800} }, "LEVEL UP!"),
+      React.createElement('div', { style:{color:"#f1f5f9",fontSize:32,fontWeight:800,margin:"8px 0"} }, `Level ${level}`),
+      React.createElement('div', { style:{color:"#94a3b8",fontSize:14} }, title)
+    )
+  );
+}
+
+// ── REMINDER MODAL ──
+function ReminderModal({ onClose, onSave }) {
+  const [label, setLabel] = useState(REMINDER_PRESETS[0].label);
+  const [custom, setCustom] = useState("");
+  const [time, setTime] = useState("08:00");
+  const [note, setNote] = useState(REMINDER_PRESETS[0].note);
+  const [repeat, setRepeat] = useState("täglich");
+  const [saved, setSaved] = useState(false);
+
+  const selectPreset = (p) => { setLabel(p.label); setNote(p.note); };
+  const handleSave = () => {
+    onSave({ label: custom.trim() || label, time, note, repeat });
+    setSaved(true);
+    setTimeout(onClose, 1600);
+  };
+
+  return React.createElement('div', { style:{position:"fixed",inset:0,background:"#000a",zIndex:1000,display:"flex",alignItems:"flex-end"} },
+    React.createElement('div', { style:{
+      width:"100%",maxWidth:480,margin:"0 auto",
+      background:"#0f172a",borderRadius:"24px 24px 0 0",
+      padding:"24px 20px 40px",border:"1px solid #334155",fontFamily:"'DM Mono',monospace",
+    } },
+      React.createElement('div', { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18} },
+        React.createElement('div', { style:{color:"#f1f5f9",fontWeight:700,fontSize:16,fontFamily:"'Syne',sans-serif"} }, "🔔 Erinnerung hinzufügen"),
+        React.createElement('span', { onClick:onClose, style:{color:"#475569",fontSize:20,cursor:"pointer"} }, "×")
+      ),
+      saved
+        ? React.createElement('div', { style:{textAlign:"center",padding:"24px 0"} },
+            React.createElement('div', { style:{fontSize:40} }, "✅"),
+            React.createElement('div', { style:{color:"#22d3ee",marginTop:8,fontSize:14} }, "Gespeichert!")
+          )
+        : React.createElement(React.Fragment, null,
+            React.createElement('div', { style:{fontSize:11,color:"#475569",marginBottom:8,letterSpacing:"0.1em"} }, "SCHNELLAUSWAHL"),
+            React.createElement('div', { style:{display:"flex",flexWrap:"wrap",gap:8,marginBottom:16} },
+              REMINDER_PRESETS.map(p =>
+                React.createElement('div', { key:p.label, onClick:()=>selectPreset(p), style:{
+                  padding:"7px 12px",borderRadius:10,fontSize:12,cursor:"pointer",
+                  background:label===p.label?"#818cf822":"#1e293b",
+                  color:label===p.label?"#818cf8":"#94a3b8",
+                  border:`1px solid ${label===p.label?"#818cf8":"#334155"}`,
+                } }, p.label)
+              )
+            ),
+            React.createElement('div', { style:{fontSize:11,color:"#475569",marginBottom:6,letterSpacing:"0.1em"} }, "EIGENER TITEL (optional)"),
+            React.createElement('input', {
+              style:{background:"#1e293b",border:"1px solid #334155",borderRadius:10,padding:"10px 14px",color:"#f1f5f9",fontSize:13,outline:"none",width:"100%",fontFamily:"'DM Mono',monospace",marginBottom:14},
+              placeholder:label, value:custom, onChange:e=>setCustom(e.target.value)
+            }),
+            React.createElement('div', { style:{display:"flex",gap:10,marginBottom:14} },
+              React.createElement('div', { style:{flex:1} },
+                React.createElement('div', { style:{fontSize:11,color:"#475569",marginBottom:6,letterSpacing:"0.1em"} }, "UHRZEIT"),
+                React.createElement('input', { type:"time", value:time, onChange:e=>setTime(e.target.value),
+                  style:{background:"#1e293b",border:"1px solid #334155",borderRadius:10,padding:"10px 12px",color:"#f1f5f9",fontSize:13,outline:"none",width:"100%",fontFamily:"'DM Mono',monospace"} })
+              ),
+              React.createElement('div', { style:{flex:1} },
+                React.createElement('div', { style:{fontSize:11,color:"#475569",marginBottom:6,letterSpacing:"0.1em"} }, "WIEDERHOLEN"),
+                React.createElement('select', { value:repeat, onChange:e=>setRepeat(e.target.value),
+                  style:{background:"#1e293b",border:"1px solid #334155",borderRadius:10,padding:"10px 12px",color:"#f1f5f9",fontSize:13,outline:"none",width:"100%",fontFamily:"'DM Mono',monospace"} },
+                  React.createElement('option', null, "einmalig"),
+                  React.createElement('option', null, "täglich"),
+                  React.createElement('option', null, "wöchentlich")
+                )
+              )
+            ),
+            React.createElement('button', { onClick:handleSave, style:{
+              width:"100%",background:"linear-gradient(135deg,#818cf8,#22d3ee)",
+              color:"#fff",border:"none",borderRadius:14,padding:"14px",
+              fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"'DM Mono',monospace",
+            } }, "Speichern 🔔")
+          )
+    )
+  );
+}
+
+// ── STREAK TAB ──
+function StreakTab({ streak, weekDone, onCheckin, lastCheckin }) {
+  const today = new Date().getDay();
+  const todayCheckedIn = lastCheckin === new Date().toDateString();
+  const milestones = [3,7,14,30,60,100];
+  const nextMilestone = milestones.find(m => m > streak) || 100;
+
+  return React.createElement('div', { style:{animation:"fadeIn 0.3s ease"} },
+    React.createElement('div', { style:{
+      background:"linear-gradient(135deg,#1a0a00,#2d1200)",
+      border:"1px solid #f9731644",borderRadius:20,padding:"24px 20px",
+      textAlign:"center",marginBottom:16,position:"relative",overflow:"hidden"
+    } },
+      React.createElement('div', { style:{position:"absolute",top:0,left:0,right:0,bottom:0,
+        background:"radial-gradient(ellipse at 50% 0%,#f9731611,transparent 70%)",pointerEvents:"none"} }),
+      React.createElement('div', { style:{fontSize:64,animation:streak>0?"streakFire 2s ease-in-out infinite":"none",display:"inline-block",marginBottom:4} }, streak>0?"🔥":"💤"),
+      React.createElement('div', { style:{fontFamily:"'Syne',sans-serif",fontSize:48,fontWeight:800,color:"#f97316",lineHeight:1} }, streak),
+      React.createElement('div', { style:{color:"#94a3b8",fontSize:13,marginTop:4} }, streak===1?"Tag Streak":"Tage Streak"),
+      streak>0 && React.createElement('div', { style:{color:"#f59e0b",fontSize:11,marginTop:6} }, `Nächster Meilenstein: ${nextMilestone} Tage 🏆`),
+      React.createElement('div', { style:{marginTop:16} },
+        !todayCheckedIn
+          ? React.createElement('button', { onClick:onCheckin, style:{
+              background:"linear-gradient(135deg,#f97316,#f59e0b)",color:"#fff",border:"none",
+              borderRadius:14,padding:"12px 28px",fontSize:13,fontWeight:700,cursor:"pointer",
+              fontFamily:"'DM Mono',monospace",boxShadow:"0 4px 16px #f9731644"
+            } }, "✓ Heute einchecken +50 XP")
+          : React.createElement('div', { style:{background:"#22d3ee22",border:"1px solid #22d3ee44",borderRadius:12,padding:"10px 20px",color:"#22d3ee",fontSize:13,fontWeight:700} }, "✅ Heute bereits eingecheckt!")
+      )
+    ),
+
+    React.createElement('div', { style:{marginBottom:16} },
+      React.createElement('div', { style:{fontSize:10,color:"#475569",letterSpacing:"0.15em",marginBottom:10,textTransform:"uppercase"} }, "Diese Woche"),
+      React.createElement('div', { style:{display:"flex",gap:6,justifyContent:"center"} },
+        WEEK_DAYS.map((d,i) => {
+          const done = weekDone[i];
+          const isToday = i === (today===0?6:today-1);
+          return React.createElement('div', { key:d, style:{display:"flex",flexDirection:"column",alignItems:"center",gap:4,flex:1} },
+            React.createElement('div', { style:{
+              width:"100%",aspectRatio:"1",borderRadius:10,
+              background:done?"linear-gradient(135deg,#f97316,#f59e0b)":isToday?"#1e293b":"#0f172a",
+              border:isToday?"2px solid #f97316":done?"none":"1px solid #1e293b",
+              display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,transition:"all 0.3s"
+            } }, done?"🔥":isToday?"◉":""),
+            React.createElement('div', { style:{fontSize:9,color:isToday?"#f97316":"#475569"} }, d)
+          );
+        })
+      )
+    ),
+
+    React.createElement('div', {},
+      React.createElement('div', { style:{fontSize:10,color:"#475569",letterSpacing:"0.15em",marginBottom:10,textTransform:"uppercase"} }, "Meilensteine"),
+      React.createElement('div', { style:{display:"flex",flexDirection:"column",gap:8} },
+        milestones.map(m => {
+          const reached = streak>=m;
+          const current = !reached && m===nextMilestone;
+          return React.createElement('div', { key:m, style:{
+            background:reached?"#1a1a0a":"#1e293b",
+            border:reached?"1px solid #f59e0b44":current?"1px solid #f9731644":"1px solid #334155",
+            borderRadius:12,padding:"10px 14px",display:"flex",alignItems:"center",gap:12
+          } },
+            React.createElement('div', { style:{fontSize:20} }, m<=3?"🥉":m<=7?"🥈":m<=14?"🥇":m<=30?"💎":m<=60?"🏆":"👑"),
+            React.createElement('div', { style:{flex:1} },
+              React.createElement('div', { style:{color:reached?"#f59e0b":current?"#f97316":"#64748b",fontSize:13,fontWeight:700} }, `${m} Tage Streak`),
+              React.createElement('div', { style:{fontSize:10,color:"#475569",marginTop:1} },
+                reached?"Erreicht! 🎉":current?`Noch ${m-streak} Tag(e)`:`${m} Tage am Stück`
+              )
+            ),
+            reached && React.createElement('div', { style:{fontSize:18} }, "✅")
+          );
+        })
+      )
+    )
+  );
+}
+
+// ── SCREEN TIME TAB ──
+function ScreenTimeTab({ screenTime, setScreenTime, onXP }) {
+  const [editApp, setEditApp] = useState(null);
+  const [inputVal, setInputVal] = useState("");
+  const [limitInput, setLimitInput] = useState("");
+
+  const totalUsed = APPS.reduce((s,a)=>s+(screenTime[a.id]?.used||0),0);
+  const totalLimit = APPS.reduce((s,a)=>s+(screenTime[a.id]?.limit||a.limit),0);
+  const overLimit = APPS.filter(a=>(screenTime[a.id]?.used||0)>(screenTime[a.id]?.limit||a.limit));
+
+  const formatMin = (min) => { if(min<60)return `${min}m`; return `${Math.floor(min/60)}h ${min%60}m`; };
+
+  const openEdit = (app) => { setEditApp(app); setInputVal(String(screenTime[app.id]?.used||0)); setLimitInput(String(screenTime[app.id]?.limit||app.limit)); };
+
+  const saveEdit = () => {
+    const used = Math.max(0,parseInt(inputVal)||0);
+    const limit = Math.max(1,parseInt(limitInput)||30);
+    const isUnderNow = used<=limit;
+    const alreadyAwarded = screenTime[editApp.id]?.awarded;
+    setScreenTime(prev=>({...prev,[editApp.id]:{used,limit,awarded:alreadyAwarded||(isUnderNow&&used>0)}}));
+    if(isUnderNow && used>0 && !alreadyAwarded) onXP(25,`${editApp.name} Limit eingehalten 📱`);
+    setEditApp(null);
+  };
+
+  return React.createElement('div', { style:{animation:"fadeIn 0.3s ease"} },
+    React.createElement('div', { style:{
+      background:"linear-gradient(135deg,#0a001a,#160d2a)",
+      border:"1px solid #a78bfa33",borderRadius:20,padding:"20px",marginBottom:16
+    } },
+      React.createElement('div', { style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start"} },
+        React.createElement('div', {},
+          React.createElement('div', { style:{fontSize:11,color:"#475569",letterSpacing:"0.1em",textTransform:"uppercase"} }, "Heutige Bildschirmzeit"),
+          React.createElement('div', { style:{fontFamily:"'Syne',sans-serif",fontSize:32,fontWeight:800,color:"#a78bfa",marginTop:4} }, formatMin(totalUsed)),
+          React.createElement('div', { style:{fontSize:11,color:"#475569",marginTop:2} }, `Limit: ${formatMin(totalLimit)}`)
+        ),
+        React.createElement('div', { style:{textAlign:"right"} },
+          React.createElement('div', { style:{fontSize:11,color:overLimit.length>0?"#f43f5e":"#22d3ee"} },
+            overLimit.length>0?`⚠️ ${overLimit.length} App(s) überschritten`:"✅ Alle im Limit"
+          ),
+          React.createElement('div', { style:{background:"#1e293b",borderRadius:8,height:6,width:120,marginTop:8,overflow:"hidden"} },
+            React.createElement('div', { style:{height:"100%",borderRadius:8,background:totalUsed>totalLimit?"linear-gradient(90deg,#f43f5e,#f97316)":"linear-gradient(90deg,#a78bfa,#22d3ee)",width:`${Math.min(totalUsed/Math.max(totalLimit,1)*100,100)}%`,transition:"width 0.5s ease"} })
+          )
+        )
+      )
+    ),
+
+    React.createElement('div', { style:{marginBottom:12} },
+      React.createElement('div', { style:{fontSize:10,color:"#475569",letterSpacing:"0.15em",marginBottom:10,textTransform:"uppercase"} }, "Apps · Tippen zum Bearbeiten"),
+      APPS.map(app => {
+        const used = screenTime[app.id]?.used||0;
+        const limit = screenTime[app.id]?.limit||app.limit;
+        const pct = Math.min(used/limit,1);
+        const over = used>limit;
+        return React.createElement('div', { key:app.id, onClick:()=>openEdit(app), style:{
+          background:"#1e293b",border:`1px solid ${over?"#f43f5e44":"#334155"}`,
+          borderRadius:14,padding:"12px 14px",marginBottom:8,cursor:"pointer",
+        } },
+          React.createElement('div', { style:{display:"flex",alignItems:"center",gap:10,marginBottom:8} },
+            React.createElement('span', { style:{fontSize:20} }, app.icon),
+            React.createElement('div', { style:{flex:1} },
+              React.createElement('div', { style:{color:"#f1f5f9",fontSize:13,fontWeight:700} }, app.name),
+              React.createElement('div', { style:{fontSize:11,color:over?"#f43f5e":"#64748b"} },
+                `${formatMin(used)} / ${formatMin(limit)}`, over&&" ⚠️ Überschritten"
+              )
+            ),
+            React.createElement('div', { style:{fontSize:11,color:over?"#f43f5e":"#64748b",background:over?"#f43f5e11":"#0f172a",padding:"3px 8px",borderRadius:6} }, `${Math.round(pct*100)}%`)
+          ),
+          React.createElement('div', { style:{background:"#0f172a",borderRadius:4,height:5,overflow:"hidden"} },
+            React.createElement('div', { style:{height:"100%",borderRadius:4,background:over?`linear-gradient(90deg,#f43f5e,#f97316)`:`linear-gradient(90deg,${app.color},${app.color}88)`,width:`${pct*100}%`,transition:"width 0.5s ease"} })
+          )
+        );
+      })
+    ),
+
+    editApp && React.createElement('div', { style:{position:"fixed",inset:0,background:"#000a",zIndex:1000,display:"flex",alignItems:"flex-end"} },
+      React.createElement('div', { style:{width:"100%",maxWidth:480,margin:"0 auto",background:"#0f172a",borderRadius:"24px 24px 0 0",padding:"24px 20px 40px",border:"1px solid #334155"} },
+        React.createElement('div', { style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18} },
+          React.createElement('div', { style:{color:"#f1f5f9",fontWeight:700,fontSize:16,fontFamily:"'Syne',sans-serif"} }, `${editApp.icon} ${editApp.name}`),
+          React.createElement('span', { onClick:()=>setEditApp(null), style:{color:"#475569",fontSize:20,cursor:"pointer"} }, "×")
+        ),
+        React.createElement('div', { style:{fontSize:11,color:"#475569",marginBottom:6,letterSpacing:"0.1em"} }, "GENUTZTE ZEIT (Minuten)"),
+        React.createElement('input', { type:"number",value:inputVal,onChange:e=>setInputVal(e.target.value),
+          style:{background:"#1e293b",border:"1px solid #334155",borderRadius:10,padding:"10px 14px",color:"#f1f5f9",fontSize:15,outline:"none",width:"100%",fontFamily:"'DM Mono',monospace",marginBottom:12} }),
+        React.createElement('div', { style:{fontSize:11,color:"#475569",marginBottom:6,letterSpacing:"0.1em"} }, "TAGES-LIMIT (Minuten)"),
+        React.createElement('input', { type:"number",value:limitInput,onChange:e=>setLimitInput(e.target.value),
+          style:{background:"#1e293b",border:"1px solid #334155",borderRadius:10,padding:"10px 14px",color:"#f1f5f9",fontSize:15,outline:"none",width:"100%",fontFamily:"'DM Mono',monospace",marginBottom:16} }),
+        React.createElement('div', { style:{fontSize:11,color:"#22d3ee",marginBottom:14,textAlign:"center"} }, "📱 Unter Limit bleiben → +25 XP"),
+        React.createElement('button', { onClick:saveEdit, style:{width:"100%",background:"linear-gradient(135deg,#a78bfa,#818cf8)",color:"#fff",border:"none",borderRadius:14,padding:"14px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"'DM Mono',monospace"} }, "Speichern ✓")
+      )
+    )
+  );
+}
+
+// ── MAIN APP ──
+function App() {
+  const [tab, setTab] = useState(0);
+  const [xp, setXP] = useState(0);
+  const [level, setLevel] = useState(1);
+  const [xpInLevel, setXpInLevel] = useState(0);
+  const [toast, setToast] = useState(null);
+  const [levelUpData, setLevelUpData] = useState(null);
+  const [showReminder, setShowReminder] = useState(false);
+  const [reminders, setReminders] = useState([]);
+  const levelRef = useRef(1);
+  const xpInLevelRef = useRef(0);
+
+  const today = new Date().toDateString();
+  const todayIdx = new Date().getDay()===0?6:new Date().getDay()-1;
+  const [streak, setStreak] = useState(0);
+  const [lastCheckin, setLastCheckin] = useState(null);
+  const [weekDone, setWeekDone] = useState(Array(7).fill(false));
+  const [screenTime, setScreenTime] = useState({});
+
+  const [todos, setTodos] = useState([
+    {id:1,text:"Wasser trinken",done:false,priority:"hoch"},
+    {id:2,text:"Einkaufen gehen",done:false,priority:"mittel"},
+  ]);
+  const [newTodo, setNewTodo] = useState("");
+  const [priority, setPriority] = useState("mittel");
+
+  const [workouts, setWorkouts] = useState([
+    {id:1,name:"Laufen",sets:"",reps:"",dauer:"30 min",done:false},
+    {id:2,name:"Push-Ups",sets:"3",reps:"20",dauer:"",done:false},
+  ]);
+  const [newWorkout, setNewWorkout] = useState({name:"",sets:"",reps:"",dauer:""});
+  const [health, setHealth] = useState({wasser:0,schlaf:0,schritte:0,kalorien:0});
+  const healthGoalAwarded = useRef({wasser:false,schlaf:false,schritte:false,kalorien:false});
+
+  const awardXP = useCallback((amount, label) => {
+    const curLevel = levelRef.current;
+    const curInLevel = xpInLevelRef.current;
+    let lvl = curLevel, inLvl = curInLevel+amount, didLevelUp=false, newLvl=lvl;
+    while(inLvl>=xpForLevel(lvl)){ inLvl-=xpForLevel(lvl); lvl++; didLevelUp=true; newLvl=lvl; }
+    levelRef.current=lvl; xpInLevelRef.current=inLvl;
+    setXP(p=>p+amount); setLevel(lvl); setXpInLevel(inLvl);
+    setToast(`+${amount} XP · ${label}`);
+    if(didLevelUp) setTimeout(()=>setLevelUpData({level:newLvl,title:TITLES[Math.min(newLvl-1,TITLES.length-1)]}),400);
+  }, []);
+
+  useEffect(() => {
+    const checks = [
+      {key:"wasser",goal:8,xpKey:"wasser_ziel",label:"Wasser-Ziel 💧"},
+      {key:"schlaf",goal:8,xpKey:"schlaf_ziel",label:"Schlaf-Ziel 🌙"},
+      {key:"schritte",goal:10000,xpKey:"schritte_ziel",label:"Schritt-Ziel 👟"},
+      {key:"kalorien",goal:2000,xpKey:"kalorien_ok",label:"Kalorien-Ziel 🔥"},
+    ];
+    checks.forEach(({key,goal,xpKey,label})=>{
+      if(health[key]>=goal&&!healthGoalAwarded.current[key]){healthGoalAwarded.current[key]=true;awardXP(XP_TABLE[xpKey],label);}
+      if(health[key]<goal)healthGoalAwarded.current[key]=false;
+    });
+  }, [health]);
+
+  const handleCheckin = () => {
+    if(lastCheckin===today)return;
+    const newStreak = streak+1;
+    setStreak(newStreak); setLastCheckin(today);
+    const newWeek=[...weekDone]; newWeek[todayIdx]=true; setWeekDone(newWeek);
+    awardXP(50,`${newStreak} Tage Streak 🔥`);
+  };
+
+  const S = {
+    phone:{width:"100%",maxWidth:480,minHeight:"100vh",background:"linear-gradient(160deg,#0f172a 0%,#1e293b 100%)",fontFamily:"'DM Mono',monospace",overflow:"hidden",display:"flex",flexDirection:"column",margin:"0 auto"},
+    header:{padding:"22px 24px 10px",background:"#0f172a",borderBottom:"1px solid #1e293b"},
+    content:{flex:1,padding:"18px 18px 100px",overflowY:"auto"},
+    card:{background:"#1e293b",borderRadius:14,padding:"12px 14px",marginBottom:9,display:"flex",alignItems:"center",gap:12,border:"1px solid #334155"},
+    input:{background:"#0f172a",border:"1px solid #334155",borderRadius:10,padding:"10px 12px",color:"#f1f5f9",fontSize:13,outline:"none",width:"100%",fontFamily:"'DM Mono',monospace"},
+    btn:(c="#818cf8")=>({background:c,color:"#fff",border:"none",borderRadius:10,padding:"10px 16px",fontSize:12,fontWeight:700,cursor:"pointer",letterSpacing:"0.05em",fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap"}),
+    sLabel:{fontSize:10,color:"#475569",letterSpacing:"0.15em",marginBottom:8,textTransform:"uppercase"},
+    sec:{marginBottom:20},
+  };
+
+  const xpNeeded = xpForLevel(level);
+  const xpPct = Math.min((xpInLevel/xpNeeded)*100,100);
+  const titleStr = TITLES[Math.min(level-1,TITLES.length-1)];
+
+  return React.createElement(React.Fragment, null,
+    toast && React.createElement(XPToast, {msg:toast,onDone:()=>setToast(null)}),
+    levelUpData && React.createElement(LevelUpBanner, {level:levelUpData.level,title:levelUpData.title,onDone:()=>setLevelUpData(null)}),
+    showReminder && React.createElement(ReminderModal, {onClose:()=>setShowReminder(false),onSave:r=>setReminders(prev=>[...prev,r])}),
+
+    React.createElement('div', {style:S.phone},
+      // Header
+      React.createElement('div', {style:S.header},
+        React.createElement('div', {style:{display:"flex",justifyContent:"space-between",alignItems:"center"}},
+          React.createElement('div', {},
+            React.createElement('div', {style:{fontSize:20,fontWeight:800,color:"#f8fafc",fontFamily:"'Syne',sans-serif"}}, "LifeApp 🌙"),
+            React.createElement('div', {style:{fontSize:11,color:"#64748b",marginTop:1}},
+              new Date().toLocaleDateString("de-DE",{weekday:"long",day:"numeric",month:"long"})
+            )
+          ),
+          React.createElement('div', {style:{display:"flex",alignItems:"center",gap:10}},
+            streak>0 && React.createElement('div', {style:{background:"linear-gradient(135deg,#f9731622,#f59e0b22)",border:"1px solid #f9731644",borderRadius:10,padding:"4px 10px",textAlign:"center"}},
+              React.createElement('div', {style:{fontSize:14,animation:"streakFire 2s ease-in-out infinite",display:"inline-block"}}, "🔥"),
+              React.createElement('div', {style:{fontSize:11,color:"#f97316",fontWeight:700,lineHeight:1}}, streak)
+            ),
+            React.createElement('div', {style:{textAlign:"right"}},
+              React.createElement('div', {style:{fontSize:11,color:"#f59e0b",fontWeight:700}}, `LVL ${level} · ${titleStr}`),
+              React.createElement('div', {style:{fontSize:10,color:"#475569",marginTop:1}}, `${xpInLevel}/${xpNeeded} XP`)
+            )
+          )
+        ),
+        React.createElement('div', {style:{marginTop:10,background:"#1e293b",borderRadius:8,height:6,overflow:"hidden"}},
+          React.createElement('div', {style:{height:"100%",borderRadius:8,background:"linear-gradient(90deg,#f59e0b,#f43f5e)",width:`${xpPct}%`,transition:"width 0.6s ease"}})
+        ),
+        React.createElement('div', {style:{display:"flex",justifyContent:"space-between",marginTop:4}},
+          React.createElement('span', {style:{fontSize:10,color:"#475569"}}, `Gesamt: ${xp} XP`),
+          React.createElement('span', {onClick:()=>setShowReminder(true),style:{fontSize:10,color:"#818cf8",cursor:"pointer"}}, "🔔 Erinnerung +")
+        )
+      ),
+
+      // Tabs
+      React.createElement('div', {style:{display:"flex",borderBottom:"1px solid #1e293b",background:"#0f172a",overflowX:"auto"}},
+        TABS.map((t,i)=>
+          React.createElement('div', {key:t, style:{
+            flex:"0 0 auto",minWidth:60,padding:"11px 6px",textAlign:"center",
+            fontSize:9,fontWeight:700,letterSpacing:"0.06em",
+            color:tab===i?"#f8fafc":"#475569",
+            borderBottom:tab===i?`3px solid ${TAB_COLORS[i]}`:"3px solid transparent",
+            cursor:"pointer",background:"transparent",transition:"all 0.2s",
+          }, onClick:()=>setTab(i)},
+            React.createElement('div', {style:{fontSize:14,marginBottom:2}}, TAB_ICONS[i]), t
+          )
+        )
+      ),
+
+      // Content
+      React.createElement('div', {style:S.content},
+
+        // AUFGABEN
+        tab===0 && React.createElement('div', {style:{animation:"fadeIn 0.3s ease"}},
+          React.createElement('div', {style:S.sec},
+            React.createElement('div', {style:S.sLabel}, "Neue Aufgabe"),
+            React.createElement('input', {style:{...S.input,marginBottom:8},placeholder:"Was ist zu tun?",value:newTodo,
+              onChange:e=>setNewTodo(e.target.value),
+              onKeyDown:e=>{if(e.key==="Enter"&&newTodo.trim()){setTodos([...todos,{id:Date.now(),text:newTodo,done:false,priority}]);setNewTodo("");}}}),
+            React.createElement('div', {style:{display:"flex",gap:8,alignItems:"center"}},
+              ["hoch","mittel","niedrig"].map(p=>
+                React.createElement('div', {key:p,onClick:()=>setPriority(p),style:{
+                  padding:"6px 10px",borderRadius:8,fontSize:11,cursor:"pointer",fontWeight:700,
+                  background:priority===p?priorityColor[p]+"33":"#0f172a",color:priorityColor[p],
+                  border:`1px solid ${priority===p?priorityColor[p]:"#334155"}`,
+                }}, p)
+              ),
+              React.createElement('button', {style:{...S.btn("#818cf8"),marginLeft:"auto"},onClick:()=>{
+                if(!newTodo.trim())return;
+                setTodos([...todos,{id:Date.now(),text:newTodo,done:false,priority}]);setNewTodo("");
+              }}, "+ Add")
+            )
+          ),
+          React.createElement('div', {style:S.sec},
+            React.createElement('div', {style:S.sLabel}, `Offen (${todos.filter(t=>!t.done).length})`),
+            todos.filter(t=>!t.done).map(todo=>
+              React.createElement('div', {key:todo.id,style:S.card},
+                React.createElement('div', {onClick:()=>{setTodos(todos.map(t=>t.id===todo.id?{...t,done:true}:t));awardXP(priorityXP[todo.priority],`"${todo.text}" erledigt ✓`);},
+                  style:{width:22,height:22,borderRadius:6,border:`2px solid ${priorityColor[todo.priority]}`,flexShrink:0,cursor:"pointer"}}),
+                React.createElement('div', {style:{flex:1}},
+                  React.createElement('div', {style:{color:"#f1f5f9",fontSize:13}}, todo.text),
+                  React.createElement('div', {style:{color:priorityColor[todo.priority],fontSize:10,marginTop:1}}, `${todo.priority} · +${priorityXP[todo.priority]} XP`)
+                ),
+                React.createElement('span', {onClick:()=>setTodos(todos.filter(t=>t.id!==todo.id)),style:{color:"#475569",cursor:"pointer",fontSize:16}}, "×")
+              )
+            )
+          ),
+          todos.filter(t=>t.done).length>0 && React.createElement('div', {style:S.sec},
+            React.createElement('div', {style:S.sLabel}, "Erledigt ✓"),
+            todos.filter(t=>t.done).map(todo=>
+              React.createElement('div', {key:todo.id,style:{...S.card,opacity:0.4}},
+                React.createElement('div', {style:{width:22,height:22,borderRadius:6,background:priorityColor[todo.priority],display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#fff"}}, "✓"),
+                React.createElement('div', {style:{flex:1,color:"#94a3b8",fontSize:13,textDecoration:"line-through"}}, todo.text),
+                React.createElement('span', {onClick:()=>setTodos(todos.filter(t=>t.id!==todo.id)),style:{color:"#475569",cursor:"pointer",fontSize:16}}, "×")
+              )
+            )
+          )
+        ),
+
+        // FITNESS
+        tab===1 && React.createElement('div', {style:{animation:"fadeIn 0.3s ease"}},
+          React.createElement('div', {style:S.sec},
+            React.createElement('div', {style:S.sLabel}, "Neue Übung"),
+            React.createElement('div', {style:{display:"flex",flexDirection:"column",gap:8}},
+              React.createElement('input', {style:S.input,placeholder:"Übung (z.B. Squats)",value:newWorkout.name,onChange:e=>setNewWorkout({...newWorkout,name:e.target.value})}),
+              React.createElement('div', {style:{display:"flex",gap:8}},
+                React.createElement('input', {style:{...S.input,width:"30%"},placeholder:"Sätze",value:newWorkout.sets,onChange:e=>setNewWorkout({...newWorkout,sets:e.target.value})}),
+                React.createElement('input', {style:{...S.input,width:"30%"},placeholder:"Wdh.",value:newWorkout.reps,onChange:e=>setNewWorkout({...newWorkout,reps:e.target.value})}),
+                React.createElement('input', {style:{...S.input,width:"40%"},placeholder:"Dauer",value:newWorkout.dauer,onChange:e=>setNewWorkout({...newWorkout,dauer:e.target.value})})
+              ),
+              React.createElement('button', {style:S.btn("#22d3ee"),onClick:()=>{
+                if(!newWorkout.name.trim())return;
+                setWorkouts([...workouts,{id:Date.now(),...newWorkout,done:false}]);
+                setNewWorkout({name:"",sets:"",reps:"",dauer:""});
+              }}, "+ Übung hinzufügen")
+            )
+          ),
+          React.createElement('div', {style:S.sec},
+            React.createElement('div', {style:S.sLabel}, `Training heute (${workouts.filter(w=>w.done).length}/${workouts.length})`),
+            React.createElement('div', {style:{background:"#0f172a",borderRadius:8,height:6,marginBottom:12,overflow:"hidden"}},
+              React.createElement('div', {style:{height:"100%",borderRadius:8,background:"linear-gradient(90deg,#22d3ee,#818cf8)",width:`${workouts.length?(workouts.filter(w=>w.done).length/workouts.length)*100:0}%`,transition:"width 0.4s ease"}})
+            ),
+            workouts.map(w=>
+              React.createElement('div', {key:w.id,style:{...S.card,opacity:w.done?.5:1}},
+                React.createElement('div', {onClick:()=>{if(w.done)return;setWorkouts(workouts.map(x=>x.id===w.id?{...x,done:true}:x));awardXP(XP_TABLE.workout_done,`${w.name} abgeschlossen ⚡`);},
+                  style:{width:22,height:22,borderRadius:6,background:w.done?"#22d3ee":"transparent",border:w.done?"none":"2px solid #22d3ee",flexShrink:0,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#0f172a"}}, w.done?"✓":""),
+                React.createElement('div', {style:{flex:1}},
+                  React.createElement('div', {style:{color:"#f1f5f9",fontSize:13,textDecoration:w.done?"line-through":"none"}}, w.name),
+                  React.createElement('div', {style:{color:"#64748b",fontSize:11,marginTop:1}},
+                    `${w.sets?w.sets+"×":""}${w.reps||""}${w.dauer?" · "+w.dauer:""}`,
+                    !w.done&&React.createElement('span',{style:{color:"#22d3ee"}},` · +${XP_TABLE.workout_done} XP`)
+                  )
+                ),
+                React.createElement('span', {onClick:()=>setWorkouts(workouts.filter(x=>x.id!==w.id)),style:{color:"#475569",cursor:"pointer",fontSize:16}}, "×")
+              )
+            )
+          )
+        ),
+
+        // GESUNDHEIT
+        tab===2 && React.createElement('div', {style:{animation:"fadeIn 0.3s ease"}},
+          React.createElement('div', {style:S.sec},
+            React.createElement('div', {style:S.sLabel}, "Tagesübersicht"),
+            React.createElement('div', {style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}},
+              React.createElement(ProgressRing,{value:health.wasser,max:8,color:"#22d3ee",label:"Wasser",unit:"/ 8 Gl."}),
+              React.createElement(ProgressRing,{value:health.schlaf,max:8,color:"#818cf8",label:"Schlaf",unit:"/ 8 Std."}),
+              React.createElement(ProgressRing,{value:health.schritte,max:10000,color:"#f59e0b",label:"Schritte",unit:"/ 10k"}),
+              React.createElement(ProgressRing,{value:health.kalorien,max:2000,color:"#f43f5e",label:"Kalorien",unit:"/ 2000"})
+            )
+          ),
+          [{key:"wasser",label:"💧 Wasser",unit:"Gläser",step:1,color:"#22d3ee",goal:8,xpKey:"wasser_ziel"},
+           {key:"schlaf",label:"🌙 Schlaf",unit:"Stunden",step:1,color:"#818cf8",goal:8,xpKey:"schlaf_ziel"},
+           {key:"schritte",label:"👟 Schritte",unit:"Schritte",step:1000,color:"#f59e0b",goal:10000,xpKey:"schritte_ziel"},
+           {key:"kalorien",label:"🔥 Kalorien",unit:"kcal",step:100,color:"#f43f5e",goal:2000,xpKey:"kalorien_ok"},
+          ].map(item=>
+            React.createElement('div', {key:item.key,style:{...S.card,justifyContent:"space-between"}},
+              React.createElement('div', {},
+                React.createElement('div', {style:{color:"#f1f5f9",fontSize:13}}, item.label),
+                React.createElement('div', {style:{color:item.color,fontSize:18,fontWeight:700,marginTop:2}},
+                  health[item.key],React.createElement('span',{style:{fontSize:11,color:"#64748b"}},` ${item.unit}`)
+                ),
+                health[item.key]<item.goal
+                  ?React.createElement('div',{style:{fontSize:10,color:"#475569"}},`Ziel: ${item.goal} → +${XP_TABLE[item.xpKey]} XP`)
+                  :React.createElement('div',{style:{fontSize:10,color:"#22d3ee"}},"✓ Ziel erreicht!")
+              ),
+              React.createElement('div', {style:{display:"flex",gap:8}},
+                [-1,1].map(d=>React.createElement('button',{key:d,onClick:()=>setHealth(h=>({...h,[item.key]:Math.max(0,h[item.key]+d*item.step)})),
+                  style:{background:"#0f172a",color:item.color,border:`1px solid ${item.color}`,borderRadius:8,width:32,height:32,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}},d>0?"+":"−"))
+              )
+            )
+          )
+        ),
+
+        // STREAK
+        tab===3 && React.createElement(StreakTab,{streak,weekDone,onCheckin:handleCheckin,lastCheckin}),
+
+        // BILDSCHIRM
+        tab===4 && React.createElement(ScreenTimeTab,{screenTime,setScreenTime,onXP:awardXP}),
+
+        // PROFIL
+        tab===5 && React.createElement('div', {style:{animation:"fadeIn 0.3s ease"}},
+          React.createElement('div', {style:{background:"linear-gradient(135deg,#1e293b,#0f172a)",borderRadius:20,padding:20,marginBottom:16,border:"1px solid #334155",textAlign:"center"}},
+            React.createElement('div', {style:{fontSize:48,marginBottom:4}}, ["🌱","🔥","⚡","💪","🏆","👑"][Math.min(level-1,5)]),
+            React.createElement('div', {style:{fontFamily:"'Syne',sans-serif",fontSize:24,fontWeight:800,color:"#f1f5f9"}}, `Level ${level}`),
+            React.createElement('div', {style:{color:"#f59e0b",fontSize:14,marginBottom:12}}, titleStr),
+            React.createElement('div', {style:{background:"#0f172a",borderRadius:8,height:10,overflow:"hidden"}},
+              React.createElement('div', {style:{height:"100%",borderRadius:8,background:"linear-gradient(90deg,#f59e0b,#f43f5e)",width:`${xpPct}%`,transition:"width 0.6s ease"}})
+            ),
+            React.createElement('div', {style:{color:"#64748b",fontSize:11,marginTop:6}}, `${xpInLevel} / ${xpNeeded} XP bis Level ${level+1}`)
+          ),
+          React.createElement('div', {style:{...S.card,background:"linear-gradient(135deg,#1a0a00,#2d1200)",border:"1px solid #f9731644",marginBottom:16}},
+            React.createElement('span', {style:{fontSize:28}}, "🔥"),
+            React.createElement('div', {style:{flex:1}},
+              React.createElement('div', {style:{color:"#f97316",fontSize:15,fontWeight:700}}, `${streak} Tage Streak`),
+              React.createElement('div', {style:{color:"#64748b",fontSize:11,marginTop:1}}, lastCheckin?"Letzter Check-in: Heute":"Noch kein Check-in")
+            )
+          ),
+          React.createElement('div', {style:S.sec},
+            React.createElement('div', {style:S.sLabel}, "Statistiken"),
+            [{label:"Gesamt XP",val:`${xp} XP`,color:"#f59e0b"},
+             {label:"Aufgaben erledigt",val:`${todos.filter(t=>t.done).length}`,color:"#818cf8"},
+             {label:"Trainings abgeschlossen",val:`${workouts.filter(w=>w.done).length}`,color:"#22d3ee"},
+             {label:"Aktueller Streak",val:`${streak} 🔥`,color:"#f97316"},
+            ].map(s=>React.createElement('div',{key:s.label,style:{...S.card,justifyContent:"space-between"}},
+              React.createElement('div',{style:{color:"#94a3b8",fontSize:13}},s.label),
+              React.createElement('div',{style:{color:s.color,fontWeight:700,fontSize:15}},s.val)
+            ))
+          ),
+          React.createElement('div', {style:S.sec},
+            React.createElement('div', {style:S.sLabel}, "XP Übersicht"),
+            Object.entries({
+              "Aufgabe (hoch)":"30 XP","Aufgabe (mittel)":"20 XP","Aufgabe (niedrig)":"10 XP",
+              "Übung abgeschlossen":"35 XP","Wasser-Ziel":"50 XP","Schlaf-Ziel":"40 XP",
+              "Schritt-Ziel":"60 XP","Kalorien-Ziel":"30 XP",
+              "Täglicher Streak":"50 XP","Bildschirm-Limit":"25 XP",
+            }).map(([k,v])=>React.createElement('div',{key:k,style:{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:"1px solid #1e293b"}},
+              React.createElement('span',{style:{color:"#94a3b8",fontSize:12}},k),
+              React.createElement('span',{style:{color:"#f59e0b",fontSize:12,fontWeight:700}},v)
+            ))
+          ),
+          React.createElement('div', {style:S.sec},
+            React.createElement('div', {style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}},
+              React.createElement('div', {style:S.sLabel}, `Erinnerungen (${reminders.length})`),
+              React.createElement('button', {style:{...S.btn("#818cf8"),padding:"6px 12px",fontSize:11},onClick:()=>setShowReminder(true)}, "+ Neu")
+            ),
+            reminders.length===0
+              ? React.createElement('div', {style:{color:"#475569",fontSize:12,textAlign:"center",padding:16}}, "Noch keine Erinnerungen.\nTippe auf 🔔 oben oder \"+ Neu\".")
+              : reminders.map((r,i)=>React.createElement('div',{key:i,style:S.card},
+                  React.createElement('span',{style:{fontSize:18}},"🔔"),
+                  React.createElement('div',{style:{flex:1}},
+                    React.createElement('div',{style:{color:"#f1f5f9",fontSize:13}},r.label),
+                    React.createElement('div',{style:{color:"#64748b",fontSize:11}},`${r.time} · ${r.repeat}`)
+                  ),
+                  React.createElement('span',{onClick:()=>setReminders(reminders.filter((_,j)=>j!==i)),style:{color:"#475569",cursor:"pointer",fontSize:16}},"×")
+                ))
+          )
+        )
+      )
+    )
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+</script>
+</body>
+</html>
